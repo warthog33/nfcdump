@@ -1,11 +1,14 @@
 /** 
  * Header file containing structures and defines for creating files in the pcap ng format. Designed for import into Wireshark
  */
- 
+
+#ifndef _PCAP_NG_HEADER_
+#define _PCAP_NG_HEADER_
+
 struct pcap_ng_block_header {
 	uint32_t block_type;
 	uint32_t block_total_length;
-} __attribute__((packed));
+}; // __attribute__((packed));
 
 struct pcap_ng_block_footer {
 	uint32_t block_total_length;
@@ -75,3 +78,5 @@ typedef enum {
 	LINKTYPE_NFC_LLCP = 245,
 	LINKTYPE_ISO_14443 = 265
 } link_type;
+
+#endif // _PCAP_NG_HEADER_

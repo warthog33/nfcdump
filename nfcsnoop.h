@@ -1,6 +1,7 @@
 /** 
  * Structure of records stored in the default AOSP implementation of the NFC log
  */
+#ifndef _DEBUG_NFCSNOOP_
 #define _DEBUG_NFCSNOOP_
 
 #include <stdint.h>
@@ -23,4 +24,3 @@ typedef struct nfcsnooz_header_t {
 } __attribute__((__packed__)) nfcsnooz_header_t;
 
 #endif /* _DEBUG_NFCSNOOP_ */
-                                                                                                                                                                         38,1          Bot
