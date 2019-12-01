@@ -221,8 +221,11 @@ int IsText ( unsigned char* input, int inputlen )
 
 bool IsSamsungLog (char* input, int inputlen )
 {
-	char* offset1 =  strstr ( input, "PERSIST LOG START" );
-       	char* offset2 = strstr (input, "PERSIST LOG END" );
+	char* offset1 = strstr ( input, "PERSIST LOG START" );
+       	char* offset2 = strstr ( input, "PERSIST LOG END" );
+
+	fprintf (stderr, "offset1=%p offset2=%p\n", offset1, offset2 );
+	//printf ( "input=%s", input );
 	if ( offset1 == NULL || offset2 == NULL )
 	 return false;
 
@@ -623,6 +626,37 @@ void SamsungLogToPcap ( char* input, int inputlen )
 	}
 }
 
+
+
+int ReadInput ( unsigned char* input, int maxlen )
+{
+	unsigned int availableSpace = maxlen;	
+	int inputlen = 0;
+		
+	//int inputlen = fread ( input, sizeof(input), STD_IN );
+
+	int readlen;
+	while (1) {	
+		int readlen = read(STDIN_FILENO, input+inputlen, availableSpace);
+
+		if ( readlen < 0 ) 
+		{
+			fprintf ( stderr, "Unable to read file, erro=%i", errno );
+			return 0;
+		}
+		if ( readlen == availableSpace )
+		{
+			fprintf ( stderr, "Input log too large\n" );
+			return 0;
+		}
+		if ( readlen == 0 )
+			break;
+		availableSpace -= readlen;
+		inputlen += readlen; 	
+	}; 
+
+	return inputlen;
+}
 int main(int argc, char** argv)
 {
 	int opt;
@@ -648,13 +682,12 @@ int main(int argc, char** argv)
 	unsigned char input[1000000]; 
 	unsigned char output[1000000];
 
-	//int inputlen = fread ( input, sizeof(input), STD_IN );
-	int inputlen = read(STDIN_FILENO, input, sizeof(input));
-	if ( inputlen <= 0 ) 
-	{
-		fprintf ( stderr, "Unable to read file, erro=%i", errno );
-		return 0;
-	}
+	unsigned int inputlen;
+	inputlen = ReadInput ( input, sizeof(input) );
+
+	if (inputlen <= 0 )
+		return 0;	
+
 	
 	if ( IsText (input, inputlen))
 	{
