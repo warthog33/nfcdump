@@ -179,6 +179,7 @@ const char* GetOid ( unsigned char oid, unsigned char gid )
 
 int Decrypt()
 {
+	return 0;
 }
 
 int Decompress (unsigned char* input, int inputlen, unsigned char* output, int maxoutputlen)
@@ -224,12 +225,21 @@ bool IsSamsungLog (char* input, int inputlen )
 	char* offset1 = strstr ( input, "PERSIST LOG START" );
        	char* offset2 = strstr ( input, "PERSIST LOG END" );
 
-	fprintf (stderr, "offset1=%p offset2=%p\n", offset1, offset2 );
+	//fprintf (stderr, "offset1=%p offset2=%p\n", offset1, offset2 );
 	//printf ( "input=%s", input );
 	if ( offset1 == NULL || offset2 == NULL )
 	 return false;
 
 	return offset2 > offset1;
+}
+
+bool IsLogCatLog (char* input, int inputlen)
+{
+	char* offset1 = strstr ( input, "NxpNciX : len =" );
+	char* offset2 = strstr ( input, "NxpNciR : len =" );
+	if ( offset1 == NULL || offset2 == NULL )
+		return false;
+	return true;
 }
 
 
@@ -265,7 +275,7 @@ int DecodeSamsungLog (char* input, unsigned char* output, int maxlen)
 			if ( decodedLineLen > 0 )
 				outputlen += decodedLineLen;
 			else
-				printf ( "Error in base 64 decode\n" );
+				printf ( "Error in base 64 decode %s %i\n", line, maxlen-outputlen );
 		}
 	}
 	return outputlen;
@@ -275,40 +285,49 @@ int DecryptSamsungLog (unsigned char* input, int inputlen, unsigned char* output
 {
 	//unsigned char decrypted[sizeof(input)];
 	AES_KEY wctx;
+
+	const char* b64_keys[] = { "vhvewKp0tNyweZQ+cFKAlg==", "bVpxNHQ3dyF6JUMqRi1KQA==" };
+
+	for ( int j = 0; j < sizeof(b64_keys)/sizeof(b64_keys[0]); j++ )
+	{
 		
-	unsigned char key[100]; 
-	int keylen = b64_pton("vhvewKp0tNyweZQ+cFKAlg==", key, sizeof(key));
+		unsigned char key[100]; 
+	//int keylen = b64_pton("vhvewKp0tNyweZQ+cFKAlg==", key, sizeof(key));
+		int keylen = b64_pton(b64_keys[j], key, sizeof(key));
 
-	fprintf ( stderr, "key (%i)%02x %02x %02x %02x %02x %02x %02x %02x", keylen, key[0], key[1], key[2], key[3], key[4], key[5], key[6], key[7] );
-	fprintf ( stderr, " %02x %02x %02x %02x %02x %02x %02x %02x\n", key[8], key[9], key[10], key[11], key[12], key[13], key[14], key[15] );
+	//fprintf ( stderr, "key (%i)%02x %02x %02x %02x %02x %02x %02x %02x", keylen, key[0], key[1], key[2], key[3], key[4], key[5], key[6], key[7] );
+	//fprintf ( stderr, " %02x %02x %02x %02x %02x %02x %02x %02x\n", key[8], key[9], key[10], key[11], key[12], key[13], key[14], key[15] );
 
-	if ( inputlen > maxlen ) {
-		printf ( "Input length too long for DecryptSamsungLog\n" );
-		return 0;
-	}
+		if ( inputlen > maxlen ) {
+			printf ( "Input length too long for DecryptSamsungLog\n" );
+			return 0;
+		}
+	
+		if ( AES_set_decrypt_key ( key, keylen*8, &wctx ) != 0 )
+			printf ( "Error setting key\n" );
 
-	if ( AES_set_decrypt_key ( key, keylen*8, &wctx ) != 0 )
-		printf ( "Error setting key\n" );
-
-	if ( inputlen % 16 )
-		printf ( "Input not multiple of 16, %i , %i\n", inputlen, inputlen%16);
+		if ( inputlen % 16 )
+			printf ( "Input not multiple of 16, %i , %i\n", inputlen, inputlen%16);
 	//AES_cbc_encrypt ( input, output, inputlen, &wctx, NULL, AES_DECRYPT ); 
 	//
-
-	for ( int i = 0; i < inputlen; i+=16 )	
+	
+		for ( int i = 0; i < inputlen; i+=16 )	
 	//AES_decrypt ( input, output, &wctx );
-		AES_decrypt ( input+i, output+i, &wctx );
+			AES_decrypt ( input+i, output+i, &wctx );
 
 	// Remove Padding
-	int outputLen = inputlen - output[inputlen-1];
-	output[outputLen] = '\0';
+		int outputLen = inputlen - output[inputlen-1];
+		output[outputLen] = '\0';
 
 
 	//for ( int i = 0; i < 100; i++ )
 	//	printf ( "%02x ", output[i]);
-
-	return outputLen;
-
+	//
+		if ( IsText ( output, outputLen ))
+			return outputLen;
+	}
+	printf ( "Unable to decrypt log" );
+	return 0;
 	
 
         //AES_encrypt(input, decrypted, &wctx);
@@ -455,7 +474,7 @@ int DecodeBinaryDefaultLog ( unsigned char* input, int inputlen )
 
         //AES_set_encrypt_key(key, 128, &wctx);
 	//Decrypt();
-
+	return outputlen;
 }
 void OutputPcapHeader ()
 {
@@ -473,7 +492,7 @@ void OutputPcapHeader ()
 	struct pcap_ng_minimal_interface_description_block idb;
 	idb.block_header.block_type = INTERFACE_DESCRIPTION;
 	idb.block_header.block_total_length = sizeof(idb);
-	idb.link_type = LINKTYPE_ISO_14443; //LINKTYPE_NFC_LLCP; //LINK_TYPE_BLUETOOTH; //LINK_TYPE_ETHERNET;
+	idb.link_type = LINKTYPE_NFC_LLCP; //LINKTYPE_ISO_14443; //LINKTYPE_NFC_LLCP; //LINK_TYPE_BLUETOOTH; //LINK_TYPE_ETHERNET;
 	idb.reserved = 0;
 	idb.snap_len = 0x40000;
 	idb.block_footer.block_total_length = sizeof(idb);
@@ -483,9 +502,9 @@ void OutputPcapHeader ()
 
 void OutputPcapRecord ( uint64_t timestamp, int captured_length, int original_length, uint8_t* data, uint32_t optionsflag)
 {
-	int alignedlength = ( captured_length + 3 ) & 0xFFFFC;
+	int alignedlength = (( captured_length + 3 + 2) & 0xFFFFC );
 
-	//printf ( "OutputPcapRecord ts=%li cl=%i ol=%i op=%i\n", timestamp, captured_length, original_length, optionsflag );
+	//fprintf ( stderr, "OutputPcapRecord ts=%li cl=%i ol=%i op=%i\n", timestamp, captured_length, original_length, optionsflag );
 //	fflush(stdout);
 
 	int recordlen = sizeof(struct pcap_ng_enhanced_packet_block_header) 
@@ -503,10 +522,12 @@ void OutputPcapRecord ( uint64_t timestamp, int captured_length, int original_le
 	epb->interface_id = 0;
 	epb->timestamp_high = timestamp >> 32;
 	epb->timestamp_low = (uint32_t)timestamp;
-	epb->captured_packet_length = captured_length;
-	epb->original_packet_length = original_length;
+	epb->captured_packet_length = captured_length + 2;// + sizeof(epb->reserved);
+	epb->original_packet_length = original_length + 2;// + sizeof(epb->reserved);
+	//epb->reserved = 0;
 
-	memcpy ( record + sizeof(struct pcap_ng_enhanced_packet_block_header), data, captured_length );
+	memset ( record + sizeof(struct pcap_ng_enhanced_packet_block_header), 0, 2 );
+	memcpy ( record + sizeof(struct pcap_ng_enhanced_packet_block_header) + 2, data, captured_length );
 
 	struct pcap_ng_options_flag* of = (struct pcap_ng_options_flag*)(record+
 		sizeof(struct pcap_ng_enhanced_packet_block_header) + alignedlength );
@@ -517,6 +538,7 @@ void OutputPcapRecord ( uint64_t timestamp, int captured_length, int original_le
 
 	struct pcap_ng_block_footer* ft = 
 		(struct pcap_ng_block_footer*)(record+recordlen-sizeof(struct pcap_ng_block_footer));
+	//ft->null_options = 0;
 	ft->block_total_length = recordlen;
 
 	write ( STDOUT_FILENO, record, recordlen);
@@ -559,8 +581,11 @@ void SamsungTextLogToBinary ( char* input, int inputlen, LOGNCIPACKET functocall
     		char* rest = remainder;
 		int i = 0;
 
+		//fprintf ( stderr, "remainder=%s\n", rest );
+
     		while ((token = strtok_r(rest, " ", &rest)))
 		{
+			fprintf ( stderr, "i=%i b=%s", i, token);
 			bytes[i++] = strtoul ( token, NULL, 16 );
 		}
 		if ( i != len )
@@ -570,6 +595,7 @@ void SamsungTextLogToBinary ( char* input, int inputlen, LOGNCIPACKET functocall
 		//len = 76;
 		timeval tv = {mktime(t), millsecs}; 	
 		//int64_t timestamp = (int64_t)((int32_t)mktime(&t)) * 1000 + millsecs;
+		fprintf ( stderr, "Direct=%s", direc);
 		functocall ( bytes, len, &tv, direc[0]=='R'? true: false );
 
 			//OutputPcapRecord ( timestamp, len, len, bytes, direc[0]=='R'? OPTIONS_INBOUND : OPTIONS_OUTBOUND );
@@ -594,12 +620,12 @@ void SamsungLogToPcap ( char* input, int inputlen )
 
 	for ( char* line = strtok ( input, "\r\n" ); line != NULL; line = strtok (NULL, "\r\n" ))
 	{
-		//printf ( "line=%s\n", line );
-		int rc = sscanf ( line, "%2d-%2d %2d:%2d:%2d.%i%[^(](%i) %[^\n]\n", 
+		fprintf ( stderr, "line=%s\n", line );
+		int rc = sscanf ( line, "%2d-%2d %2d:%2d:%2d.%i  %[^(](%i) %[^\n]\n", 
 			&t.tm_mon, &t.tm_mday, &t.tm_hour, &t.tm_min, &t.tm_sec,
 			&millsecs, direc, &len, remainder );
 
-		//printf ( "mon=%i mday=%i hour=%i min=%i sec=%i\n", t.tm_mon, t.tm_mday, t.tm_hour, t.tm_min, t.tm_sec );
+		//fprintf ( stderr, "mon=%i mday=%i hour=%i min=%i sec=%i rc=%i\n", t.tm_mon, t.tm_mday, t.tm_hour, t.tm_min, t.tm_sec, rc );
 		// Check for full line
 		if ( rc == 9 )
 		{
@@ -607,8 +633,10 @@ void SamsungLogToPcap ( char* input, int inputlen )
     			char* rest = remainder;
 			int i = 0;
 
+
     			while ((token = strtok_r(rest, " ", &rest)))
 			{
+				//fprintf ( stderr, "i=%i b=%s", i, token );
 				bytes[i++] = strtoul ( token, NULL, 16 );
 			}
 			if ( i != len )
@@ -617,15 +645,92 @@ void SamsungLogToPcap ( char* input, int inputlen )
 		
 			//len = 76;	
 			int64_t timestamp = (int64_t)((int32_t)mktime(&t)) * 1000 + millsecs;
+
+			fprintf ( stderr, "D=%s", direc);
 			OutputPcapRecord ( timestamp, len, len, bytes, direc[0]=='R'? OPTIONS_INBOUND : OPTIONS_OUTBOUND );
 			
 		}
-		//fprintf ( stdout, "rc=%i ts=%li direc=%s len=%i r=%s bytes[0]=%02x\n", rc, timestamp, direc, len, remainder, bytes[0] );
 
+		//fprintf ( stdout, "rc=%i ts=%li direc=%s len=%i r=%s bytes[0]=%02x\n", rc, timestamp, direc, len, remainder, bytes[0] );
+		rc = sscanf ( line, "%2d-%2d %2d:%2d:%2d.%i  NxpNci%c%i > %[^\n]\n", 
+			&t.tm_mon, &t.tm_mday, &t.tm_hour, &t.tm_min, &t.tm_sec,
+			&millsecs, direc, &len, remainder );
+		if ( rc == 9 )
+		{
+			int i;
+			char temp[3];
+			for ( i = 0; remainder[i*2] >= '0'; i++ )
+			{
+				//fprintf ( stderr, "remainder[i*2] = %02x,%02x i=%i\n", remainder[i*2], remainder[i*2+1],i);
+				temp[0] = remainder[i*2];
+				temp[1] = remainder[i*2+1];
+				temp[2] = '\0';
+				
+				bytes[i] = strtoul(temp, NULL, 16 );
+			}
+			if ( i != len )
+				fprintf ( stderr, "Error parsing chars i=%i len=%i bytes[0]=%x\n", i, len, bytes[0] );
+
+			int64_t timestamp = (int64_t)((int32_t)mktime(&t)) * 1000 + millsecs;
+
+			//fprintf ( stderr, "D=%s", direc);
+			OutputPcapRecord ( timestamp, len, len, bytes, direc[0]=='R'? OPTIONS_INBOUND : OPTIONS_OUTBOUND );
+		}
 
 	}
 }
 
+void LogCatToPcap ( char* input, int inputlen )
+{
+	char line[1000];
+	char time[100];
+	int millsecs;
+	int pid;
+	int tid;
+	char priority;
+	char direc[100];
+	int  len;
+	struct tm t = {0};
+	int txcount = 0, rxcount = 0;
+	char remainder[1000];
+
+	uint8_t bytes[1000];
+	
+	OutputPcapHeader ();
+
+	for ( char* line = strtok ( input, "\r\n" ); line != NULL; line = strtok (NULL, "\r\n" ))
+	{
+		//fprintf ( stderr, "line=%s\n", line );
+		int rc = sscanf ( line, "%2d-%2d %2d:%2d:%2d.%i  %i %i %c NxpNci%s : len =%i > %s", 
+			&t.tm_mon, &t.tm_mday, &t.tm_hour, &t.tm_min, &t.tm_sec,
+			&millsecs, &pid, &tid, &priority, direc, &len, remainder );
+		//fprintf ( stderr, "LogCatToPcap line=%s rc=%i\n", line, rc );
+		if ( rc < 12 )
+			continue;
+		//fprintf ( stderr, "LogCatToPcap line=%s rc=%i\n", line, rc );
+
+		int i;
+		char temp[3];
+		for ( i = 0; remainder[i*2] >= '0'; i++ )
+		{
+			//fprintf ( stderr, "remainder[i*2] = %02x,%02x i=%i\n", remainder[i*2], remainder[i*2+1],i);
+			temp[0] = remainder[i*2];
+			temp[1] = remainder[i*2+1];
+			temp[2] = '\0';
+			
+			bytes[i] = strtoul(temp, NULL, 16 );
+		}
+		if ( i != len )
+			fprintf ( stderr, "Error parsing chars i=%i len=%i bytes[0]=%x\n", i, len, bytes[0] );
+
+		int64_t timestamp = (int64_t)((int32_t)mktime(&t)) * 1000 + millsecs;
+
+		OutputPcapRecord ( timestamp, len, len, bytes, direc[0]=='R'? OPTIONS_INBOUND : OPTIONS_OUTBOUND );
+		direc[0] == 'R' ? rxcount++ : txcount++;
+			
+	}
+	fprintf ( stderr, "LogCatToPcap TX Count=%i RX Counter=%i\n", txcount, rxcount );
+}
 
 
 int ReadInput ( unsigned char* input, int maxlen )
@@ -660,17 +765,17 @@ int ReadInput ( unsigned char* input, int maxlen )
 int main(int argc, char** argv)
 {
 	int opt;
-	while ((opt = getopt(argc, argv, "t")) != -1) {
+	while ((opt = getopt(argc, argv, "p")) != -1) {
                switch (opt) {
                case 'p':
-                   outputpcap = 1;
+                   outputpcap = true;
                    break;
                /*case 't':
                    nsecs = atoi(optarg);
                    tfnd = 1;
                    break;*/
                default: /* '?' */
-                   fprintf(stderr, "Usage: %s [-t] < <input filename>\n  -t Output in pcapng format\n",
+                   fprintf(stderr, "Usage: %s [-p] < <input filename>\n  -t Output in pcapng format\n",
                            argv[0]);
                    exit(EXIT_FAILURE);
                }
@@ -679,30 +784,43 @@ int main(int argc, char** argv)
 
 	//printf ( "Hello World\n" );
 
-	unsigned char input[1000000]; 
-	unsigned char output[1000000];
+	unsigned int maxlogsize = 100000000;
+	unsigned char* input = (unsigned char*)malloc ( maxlogsize ); 
+	unsigned char* output = (unsigned char*)malloc ( maxlogsize );
 
 	unsigned int inputlen;
-	inputlen = ReadInput ( input, sizeof(input) );
+	inputlen = ReadInput ( input, maxlogsize );
 
 	if (inputlen <= 0 )
 		return 0;	
 
 	
-	if ( IsText (input, inputlen))
+	if ( IsText (input, MIN(inputlen,100)))
 	{
 		if ( IsSamsungLog ((char*)input, inputlen ))
 		{
-			int outputLen = DecodeSamsungLog ( (char*)input, output, sizeof(output));
+			fprintf ( stderr, "IsSamsungLog=true\n" );
+			int outputLen = DecodeSamsungLog ( (char*)input, output, maxlogsize);
 			if ( outputLen > 0 )
 			{
-				int decryptedLen = DecryptSamsungLog ( output, outputLen, input, sizeof(input));
-				printf ( "Log=(%i)\n%*s\n", decryptedLen, decryptedLen, input );
+				fprintf ( stderr, "outputLen=%i\n", outputLen );
+				int decryptedLen = DecryptSamsungLog ( output, outputLen, input, maxlogsize);
+
+				if (!outputpcap )
+					printf ( "Log=%i(%i)\n%*s\n", outputpcap, decryptedLen, decryptedLen, input );
+				else
+				{
+					SamsungLogToPcap ( (char*)input, decryptedLen );
+				}
 
 				//SamsungTextLogToBinary ((char*) input, decryptedLen, DumpNciMessage );
 				//SamsungLogToPcap ( (char*)input, outputLen );
 			}
 				
+		}
+		else if ( IsLogCatLog ((char*)input, inputlen ))
+		{
+			LogCatToPcap ( (char*)input, inputlen );
 		}
 		else
 		{
@@ -721,7 +839,6 @@ int main(int argc, char** argv)
 			printf ( "Unknown Binary Format\n" );
 		}
 	}
-
-
-	return 0;
 }
+
+
