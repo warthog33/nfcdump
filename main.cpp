@@ -57,6 +57,7 @@
 #define NCI_MSG_CORE_CONN_CREDITS       6
 #define NCI_MSG_CORE_GEN_ERR_STATUS     7
 #define NCI_MSG_CORE_INTF_ERR_STATUS    8
+#define NCI_MSG_CORE_SET_POWER_SUB_STATE 9
 
 /**********************************************
  * RF MANAGEMENT Group Opcode    - 1
@@ -73,6 +74,7 @@
 #define NCI_MSG_RF_EE_ACTION            9
 #define NCI_MSG_RF_EE_DISCOVERY_REQ     10
 #define NCI_MSG_RF_PARAMETER_UPDATE     11
+#define NCI_MSG_RF_ISO_DEP_NAK_PRESENCE 16
 /**********************************************
  * NFCEE MANAGEMENT Group Opcode - 2
  **********************************************/
@@ -94,7 +96,7 @@ const char* GetGid ( unsigned char gid )
 	else if ( gid == NCI_GID_PROP )
 		return "Proprietary";
 	else
-		sprintf ( buffer, " **Unknown** (%02x)", gid ); 
+		snprintf ( buffer, sizeof(buffer), " **Unknown** (%02x)", gid ); 
 	return buffer;
 }
 
@@ -123,6 +125,8 @@ const char* GetOid ( unsigned char oid, unsigned char gid )
 		return "Core Gen Err Status";
 	case NCI_MSG_CORE_INTF_ERR_STATUS:
 		return "Core Intf Err Status";
+	case NCI_MSG_CORE_SET_POWER_SUB_STATE:
+		return "Core Set Power Sub State";
 	}
 	}
 	else if ( gid == NCI_GID_RF_MANAGE )
@@ -138,7 +142,7 @@ const char* GetOid ( unsigned char oid, unsigned char gid )
 	case NCI_MSG_RF_DISCOVER:
 		return "RF Discover";
 	case NCI_MSG_RF_DISCOVER_SELECT:
-		return "RF Discvoer Select";
+		return "RF Discover Select";
 	case NCI_MSG_RF_INTF_ACTIVATED :
 		return "RF Intf Activated";
 	case NCI_MSG_RF_DEACTIVATE:
@@ -153,6 +157,8 @@ const char* GetOid ( unsigned char oid, unsigned char gid )
 		return "RF EE Discovery";
 	case NCI_MSG_RF_PARAMETER_UPDATE:
 		return "RF Param Update";
+	case NCI_MSG_RF_ISO_DEP_NAK_PRESENCE:
+		return "RF ISO DEP NAK Prescence";
 	}
 	}
 	else if ( gid == NCI_GID_EE_MANAGE )
@@ -165,8 +171,88 @@ const char* GetOid ( unsigned char oid, unsigned char gid )
 		return "NFC EE Mode Set";
 	}
 	}
-	sprintf ( buffer, "**Unknown** (%02x)", oid );
+	else if ( gid == NCI_GID_PROP)
+	{
+	switch (oid)
+	{
+	case 5: 
+		return "Proprietary(5)";
+	}
+	}
+	snprintf ( buffer, sizeof(buffer), "**Unknown** (%02x)", oid );
 	return buffer;
+}
+
+
+void OutputPcapHeader ()
+{
+	struct pcap_ng_minimal_section_header_block shb;
+	shb.block_header.block_type = SECTION_HEADER_BLOCK;
+	shb.block_header.block_total_length = sizeof(shb);
+	shb.byte_order_magic = SECTION_HEADER_MAGIC;
+	shb.major_version = SECTION_HEADER_MAJOR_VER;
+	shb.major_version = SECTION_HEADER_MINOR_VER;
+	shb.section_length = SECTION_LENGTH_UNKNOWN;
+	shb.block_footer.block_total_length = sizeof(shb);
+	
+	write ( STDOUT_FILENO, &shb, sizeof(shb));
+
+	struct pcap_ng_minimal_interface_description_block idb;
+	idb.block_header.block_type = INTERFACE_DESCRIPTION;
+	idb.block_header.block_total_length = sizeof(idb);
+	idb.link_type = LINKTYPE_NFC_LLCP; //LINKTYPE_ISO_14443; //LINKTYPE_NFC_LLCP; //LINK_TYPE_BLUETOOTH; //LINK_TYPE_ETHERNET;
+	idb.reserved = 0;
+	idb.snap_len = 0x40000;
+	idb.block_footer.block_total_length = sizeof(idb);
+
+	write ( STDOUT_FILENO, &idb, sizeof(idb));
+}
+
+
+void OutputPcapRecord ( uint64_t timestamp, int captured_length, int original_length, uint8_t* data, uint32_t optionsflag)
+{
+	int alignedlength = (( captured_length + 3 + 2) & 0xFFFFC );
+
+	//fprintf ( stderr, "OutputPcapRecord ts=%li cl=%i ol=%i op=%i\n", timestamp, captured_length, original_length, optionsflag );
+	//fflush(stdout);
+
+	int recordlen = sizeof(struct pcap_ng_enhanced_packet_block_header) 
+		+ alignedlength 
+		+ sizeof ( struct pcap_ng_options_flag )
+		+ sizeof ( struct pcap_ng_block_footer );
+
+	uint8_t* record = (uint8_t*)calloc ( recordlen, 1 );
+
+	struct pcap_ng_enhanced_packet_block_header* epb = 
+		(struct pcap_ng_enhanced_packet_block_header*)record;
+
+	epb->block_header.block_type = ENHANCED_PACKET;
+	epb->block_header.block_total_length = recordlen;
+	epb->interface_id = 0;
+	epb->timestamp_high = timestamp >> 32;
+	epb->timestamp_low = (uint32_t)timestamp;
+	epb->captured_packet_length = captured_length + 2;// + sizeof(epb->reserved);
+	epb->original_packet_length = original_length + 2;// + sizeof(epb->reserved);
+	//epb->reserved = 0;
+
+	memset ( record + sizeof(struct pcap_ng_enhanced_packet_block_header), 0, 2 );
+	memcpy ( record + sizeof(struct pcap_ng_enhanced_packet_block_header) + 2, data, captured_length );
+
+	struct pcap_ng_options_flag* of = (struct pcap_ng_options_flag*)(record+
+		sizeof(struct pcap_ng_enhanced_packet_block_header) + alignedlength );
+
+	of->code = OPTIONS_EPB_FLAG;
+	of->length = sizeof(of->options_flag);
+	of->options_flag = optionsflag;
+
+	struct pcap_ng_block_footer* ft = 
+		(struct pcap_ng_block_footer*)(record+recordlen-sizeof(struct pcap_ng_block_footer));
+	//ft->null_options = 0;
+	ft->block_total_length = recordlen;
+
+	write ( STDOUT_FILENO, record, recordlen);
+
+	free ( record);
 }
 
 /*int base64_decode ( char* input, int inputlen, unsigned char* output, int outputlen )
@@ -192,7 +278,8 @@ int Decompress (unsigned char* input, int inputlen, unsigned char* output, int m
 	zs.opaque = Z_NULL;
 
 	int iirc = inflateInit(&zs );
-	fprintf ( stderr, "inflateInit = %i\n", iirc );
+	if ( iirc != Z_OK )
+		fprintf ( stderr, "inflateInit = %i\n", iirc );
 	
 	zs.next_in = input; //+sizeof(nfcsnooz_preamble_t) ;
 	zs.avail_in = inputlen; //-sizeof(nfcsnooz_preamble_t);
@@ -202,8 +289,9 @@ int Decompress (unsigned char* input, int inputlen, unsigned char* output, int m
 	//int err = deflate(&zs, (i == num_blocks - 1) ? Z_FINISH : Z_NO_FLUSH);
 
 	int err = inflate ( &zs, Z_NO_FLUSH); 
-	
-	fprintf ( stderr, "err = %i zs.avail_out=%i\n", err, zs.avail_out );
+	if ( err != Z_STREAM_END )
+		fprintf ( stderr, "err = %i zs.avail_out=%i\n", err, zs.avail_out );
+		
 	return maxoutputlen - zs.avail_out; 
 }
 
@@ -247,6 +335,16 @@ bool IsDefaultLog (char* input, int inputlen )
 {
 	char* offset1 =  strstr ( input, "SUMMARY START" );
        	char* offset2 = strstr (input, "LOG SUMMARY END" );
+	if ( offset1 == NULL || offset2 == NULL )
+	 return false;
+
+	return offset2 > offset1;
+}
+
+bool IsNfcSnoopLog (char* input, int inputlen )
+{
+	char* offset1 =  strstr ( input, "BEGIN:NFCSNOOP_LOG_SUMMARY" );
+       	char* offset2 = strstr (input, "END:NFCSNOOP_LOG_SUMMARY" );
 	if ( offset1 == NULL || offset2 == NULL )
 	 return false;
 
@@ -336,6 +434,31 @@ int DecryptSamsungLog (unsigned char* input, int inputlen, unsigned char* output
 	//	printf ( "%02x ", decrypted[i] );
 }
 
+int DecodeNfcSnoopLog (char* input, unsigned char* output, int maxlen)
+{
+	int outputlen = 0;
+	bool foundStart = false;
+	for ( char* line = strtok ( input, "\r\n" ); line != NULL; line = strtok (NULL, "\r\n" ))
+	{
+		if ( foundStart == false )
+		{
+			if (strstr (line, "BEGIN:NFCSNOOP_LOG_SUMMARY" ) != 0)
+				foundStart = true;
+		}
+		else
+		{
+			if (strstr(line, "END:NFCSNOOP_LOG_SUMMARY" ) != 0 )
+				break;
+				
+			int decodedLineLen = b64_pton(line, output+outputlen, maxlen-outputlen);
+			if ( decodedLineLen > 0 )
+				outputlen += decodedLineLen;
+			else
+				printf ( "Error in base 64 decode %s %i\n", line, maxlen-outputlen );
+		}
+	}
+	return outputlen;
+}
 
 void DumpNciMessage ( unsigned char* input, int inputlen , timeval* tv, bool isincoming)
 {
@@ -345,7 +468,7 @@ void DumpNciMessage ( unsigned char* input, int inputlen , timeval* tv, bool isi
 
 	unsigned char* payload = (unsigned char*)input; 
 
-	printf ( "%li.%li:  %02x %02x %02x              ", tv->tv_sec, tv->tv_usec, payload[0], payload[1], payload[2] );
+	printf ( "%li.%li:  %02x %02x %02x              ", tv->tv_sec, (long)tv->tv_usec, payload[0], payload[1], payload[2] );
 
 	switch ( payload[0] >> NCI_MT_SHIFT)
 	{
@@ -355,13 +478,13 @@ void DumpNciMessage ( unsigned char* input, int inputlen , timeval* tv, bool isi
 			printf ( " RFU=%02x", payload[1] );
 		break;
 	case  NCI_MT_CMD:
-		printf ( "NCI_MT_CMD Oid=%s Len=%02x ", GetOid(payload[1], payload[0]&NCI_GID_MASK), payload[2] ); 
+		printf ( "NCI_MT_CMD Oid=\'%s\' Len=%02x ", GetOid(payload[1], payload[0]&NCI_GID_MASK), payload[2] ); 
 		break;
 	case NCI_MT_RSP:
-		printf ( "NCI_MT_RSP Oid=%s Len=%02x ", GetOid(payload[1], payload[0]&NCI_GID_MASK), payload[2] ); 
+		printf ( "NCI_MT_RSP Oid=\'%s\' Len=%02x ", GetOid(payload[1], payload[0]&NCI_GID_MASK), payload[2] ); 
 		break;
 	case NCI_MT_NTF:
-		printf ( "NCI_MT_NTF Oid=%s Len=%02x ", GetOid( payload[1], payload[0]&NCI_GID_MASK), payload[2] ); 
+		printf ( "NCI_MT_NTF Oid=\'%s\' Len=%02x ", GetOid( payload[1], payload[0]&NCI_GID_MASK), payload[2] ); 
 		break;
 	case NCI_MT_CFG:
 		printf ( "NCI_MT_CFG ");
@@ -388,55 +511,63 @@ void DumpNciMessage ( unsigned char* input, int inputlen , timeval* tv, bool isi
 
 void DumpNciLog ( unsigned char* input, int inputlen )
 {
+	if ( outputpcap )
+		OutputPcapHeader();
+
 	unsigned char* currpos = input;
 	while ( currpos  < input + inputlen ) 
 	//for ( int i = 0; i<100;  i++)
 	{
 		nfcsnooz_header_t* hdr = (nfcsnooz_header_t*)currpos;	
-
-		printf ( "%02x %02x  %02x %02x %02x %02x  %02x Len=%i Delta_Time_ms=%u IsRcvd=%i\n", currpos[0], currpos[1], currpos[2], currpos[3], currpos[4], currpos[5], currpos[6], hdr->length, hdr->delta_time_ms, hdr->is_received );   
-
 		unsigned char* payload = (unsigned char*)&hdr[1]; 
 
-		printf ( " %02x %02x %02x              ", payload[0], payload[1], payload[2] );
-
-		switch ( payload[0] >> NCI_MT_SHIFT)
+		if ( outputpcap )
 		{
-		case NCI_MT_DATA:
-			printf ( "NCI_MT_DATA ConnId=%x    Len=%02x", payload[0]&0xf, payload[2]);
-			if ( payload[1] )
-				printf ( " RFU=%02x", payload[1] );
-			break;
-		case  NCI_MT_CMD:
-			printf ( "NCI_MT_CMD Oid=%s Len=%02x ", GetOid(payload[1], payload[0]&NCI_GID_MASK), payload[2] ); 
-			break;
-		case NCI_MT_RSP:
-			printf ( "NCI_MT_RSP Oid=%s Len=%02x ", GetOid(payload[1], payload[0]&NCI_GID_MASK), payload[2] ); 
-			break;
-		case NCI_MT_NTF:
-			printf ( "NCI_MT_NTF Oid=%s Len=%02x ", GetOid( payload[1], payload[0]&NCI_GID_MASK), payload[2] ); 
-			break;
-		case NCI_MT_CFG:
-			printf ( "NCI_MT_CFG ");
-			break;
-		default:
-			printf ( "NCI_Unknown" );
-			break;
+			OutputPcapRecord ( hdr->delta_time_ms, hdr->length, 3+payload[2], payload, hdr->is_received==1? OPTIONS_INBOUND : OPTIONS_OUTBOUND );
 		}
+		else
+		{
+			printf ( "%02x %02x  %02x %02x %02x %02x  %02x Len=%i Delta_Time_ms=%u IsRcvd=%i\n", currpos[0], currpos[1], currpos[2], currpos[3], currpos[4], currpos[5], currpos[6], hdr->length, hdr->delta_time_ms, hdr->is_received );   
+			printf ( " %02x %02x %02x              ", payload[0], payload[1], payload[2] );
+			switch ( payload[0] >> NCI_MT_SHIFT)
+			{
+			case NCI_MT_DATA:
+				printf ( "NCI_MT_DATA ConnId=%x    Len=%02x", payload[0]&0xf, payload[2]);
+				if ( payload[1] )
+					printf ( " RFU=%02x", payload[1] );
+				break;
+			case  NCI_MT_CMD:
+				printf ( "NCI_MT_CMD Oid='%s' Len=%02x ", GetOid(payload[1], payload[0]&NCI_GID_MASK), payload[2] ); 
+				break;
+			case NCI_MT_RSP:
+				printf ( "NCI_MT_RSP Oid='%s' Len=%02x ", GetOid(payload[1], payload[0]&NCI_GID_MASK), payload[2] ); 
+				break;
+			case NCI_MT_NTF:
+				printf ( "NCI_MT_NTF Oid='%s' Len=%02x ", GetOid( payload[1], payload[0]&NCI_GID_MASK), payload[2] ); 
+				break;
+			case NCI_MT_CFG:
+				printf ( "NCI_MT_CFG ");
+				break;
+			default:
+				printf ( "NCI_Unknown" );
+				break;
+			}
 
-		if ( payload[0]>>4 & 1 )
-			printf ( " PBF ");	
+			if ( payload[0]>>4 & 1 )
+				printf ( " PBF ");	
+			if ( hdr->length > 3 )	
+			{
+				printf ( "\n  " );	
+				for ( int j = 3; j < hdr->length; j++ )
+					printf ( "%02x ", payload[j]);
+			}
 
+			printf ( "\n" );
+		}
+		
 		//printf ( "PBF=%01x Info=%x OID=%02x Len=%02x ", payload[0]>>4 & 0x1, payload[0]&0xF,  payload[1], payload[2] ); 
 
-		if ( hdr->length > 3 )	
-		{
-			printf ( "\n  " );	
-			for ( int j = 3; j < hdr->length; j++ )
-				printf ( "%02x ", payload[j]);
-		}
-
-		printf ( "\n" );
+		
 		//hdr = (nfcsnooz_header_t*)((char*)hdr + hdr->length + sizeof(nfcsnooz_header_t));
 		currpos += sizeof(nfcsnooz_header_t)+hdr->length;
 		
@@ -459,14 +590,14 @@ int DecodeBinaryDefaultLog ( unsigned char* input, int inputlen )
 	//printf ( "Len=%02i TimeOffset=%08i is_received=%i ", hdr->length, hdr->delta_time_ms, hdr->is_received );
 
 	nfcsnooz_preamble_t* pre = (nfcsnooz_preamble_t*)input;
-	printf ( "inputlen=%i\n", inputlen );
-	printf ( "nfcsnooz_preamble.version=%i nfcsnooz_preamble.last_timestamp_ms=%lui\n", pre->version, pre->last_timestamp_ms );
+	fprintf ( stderr, "inputlen=%i\n", inputlen );
+	fprintf ( stderr, "nfcsnooz_preamble.version=%i nfcsnooz_preamble.last_timestamp_ms=%lui\n", pre->version, (unsigned long)pre->last_timestamp_ms );
 
 	unsigned char output[1000000] = {0xFF};
 	int outputlen = Decompress ( input+sizeof(nfcsnooz_preamble_t), inputlen-sizeof(nfcsnooz_preamble_t), output, sizeof(output));
 
 
-	printf ( "Decompressed size=%i\n", outputlen );
+	fprintf ( stderr, "Decompressed size=%i\n", outputlen );
 	//for ( int i = 0 ; i < outputlen; i++)
 	//	printf ( "%02x ", output[i] );
 
@@ -476,75 +607,8 @@ int DecodeBinaryDefaultLog ( unsigned char* input, int inputlen )
 	//Decrypt();
 	return outputlen;
 }
-void OutputPcapHeader ()
-{
-	struct pcap_ng_minimal_section_header_block shb;
-	shb.block_header.block_type = SECTION_HEADER_BLOCK;
-	shb.block_header.block_total_length = sizeof(shb);
-	shb.byte_order_magic = SECTION_HEADER_MAGIC;
-	shb.major_version = SECTION_HEADER_MAJOR_VER;
-	shb.major_version = SECTION_HEADER_MINOR_VER;
-	shb.section_length = SECTION_LENGTH_UNKNOWN;
-	shb.block_footer.block_total_length = sizeof(shb);
-	
-	write ( STDOUT_FILENO, &shb, sizeof(shb));
 
-	struct pcap_ng_minimal_interface_description_block idb;
-	idb.block_header.block_type = INTERFACE_DESCRIPTION;
-	idb.block_header.block_total_length = sizeof(idb);
-	idb.link_type = LINKTYPE_NFC_LLCP; //LINKTYPE_ISO_14443; //LINKTYPE_NFC_LLCP; //LINK_TYPE_BLUETOOTH; //LINK_TYPE_ETHERNET;
-	idb.reserved = 0;
-	idb.snap_len = 0x40000;
-	idb.block_footer.block_total_length = sizeof(idb);
 
-	write ( STDOUT_FILENO, &idb, sizeof(idb));
-}
-
-void OutputPcapRecord ( uint64_t timestamp, int captured_length, int original_length, uint8_t* data, uint32_t optionsflag)
-{
-	int alignedlength = (( captured_length + 3 + 2) & 0xFFFFC );
-
-	//fprintf ( stderr, "OutputPcapRecord ts=%li cl=%i ol=%i op=%i\n", timestamp, captured_length, original_length, optionsflag );
-//	fflush(stdout);
-
-	int recordlen = sizeof(struct pcap_ng_enhanced_packet_block_header) 
-		+ alignedlength 
-		+ sizeof ( struct pcap_ng_options_flag )
-		+ sizeof ( struct pcap_ng_block_footer );
-
-	uint8_t* record = (uint8_t*)calloc ( recordlen, 1 );
-
-	struct pcap_ng_enhanced_packet_block_header* epb = 
-		(struct pcap_ng_enhanced_packet_block_header*)record;
-
-	epb->block_header.block_type = ENHANCED_PACKET;
-	epb->block_header.block_total_length = recordlen;
-	epb->interface_id = 0;
-	epb->timestamp_high = timestamp >> 32;
-	epb->timestamp_low = (uint32_t)timestamp;
-	epb->captured_packet_length = captured_length + 2;// + sizeof(epb->reserved);
-	epb->original_packet_length = original_length + 2;// + sizeof(epb->reserved);
-	//epb->reserved = 0;
-
-	memset ( record + sizeof(struct pcap_ng_enhanced_packet_block_header), 0, 2 );
-	memcpy ( record + sizeof(struct pcap_ng_enhanced_packet_block_header) + 2, data, captured_length );
-
-	struct pcap_ng_options_flag* of = (struct pcap_ng_options_flag*)(record+
-		sizeof(struct pcap_ng_enhanced_packet_block_header) + alignedlength );
-
-	of->code = OPTIONS_EPB_FLAG;
-	of->length = sizeof(of->options_flag);
-	of->options_flag = optionsflag;
-
-	struct pcap_ng_block_footer* ft = 
-		(struct pcap_ng_block_footer*)(record+recordlen-sizeof(struct pcap_ng_block_footer));
-	//ft->null_options = 0;
-	ft->block_total_length = recordlen;
-
-	write ( STDOUT_FILENO, record, recordlen);
-
-	free ( record);
-}
 
 
 typedef void (*LOGNCIPACKET)(uint8_t * rawncimessage, int len, timeval* tv, bool isinbound );
@@ -775,7 +839,7 @@ int main(int argc, char** argv)
                    tfnd = 1;
                    break;*/
                default: /* '?' */
-                   fprintf(stderr, "Usage: %s [-p] < <input filename>\n  -t Output in pcapng format\n",
+                   fprintf(stderr, "Usage: %s [-p] < <input filename>\n  -p Output in pcapng format\n",
                            argv[0]);
                    exit(EXIT_FAILURE);
                }
@@ -821,6 +885,13 @@ int main(int argc, char** argv)
 		else if ( IsLogCatLog ((char*)input, inputlen ))
 		{
 			LogCatToPcap ( (char*)input, inputlen );
+		}
+		else if ( IsNfcSnoopLog((char*)input, inputlen ))
+		{
+			int outputlen = DecodeNfcSnoopLog ((char*)input, output, maxlogsize);
+			printf ( "Default log detected len=%i", outputlen);
+			DecodeBinaryDefaultLog(output, outputlen);
+			
 		}
 		else
 		{

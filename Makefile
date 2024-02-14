@@ -1,4 +1,4 @@
-LDLIBS=z -l ssl -lcrypto -lresolv
+LDLIBS=z  -lresolv -lcrypto 
 
 nfcdump: main.o
 	$(CXX) $(CXXFLAGS) -o nfcdump main.o -l $(LDLIBS)
